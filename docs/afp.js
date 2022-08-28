@@ -1635,9 +1635,8 @@ let AudioFingerprintRuntime = (() => {
     doRun();
     return o;
 })
-
 let fpRuntime;
-function InstantiateRuntime(){
+export function InstantiateRuntime(){
     return new Promise((resolve, reject) => {
         fpRuntime = AudioFingerprintRuntime()
         var monitor = setInterval(() => {
@@ -1647,7 +1646,7 @@ function InstantiateRuntime(){
         }) 
     })
 }
-function GenerateFP(PCMBuffer) {
+export function GenerateFP(PCMBuffer) {
     /* Generates audio fingerprint via ShazamV2 algorithm,
         as implmented by afp.wasm
 
