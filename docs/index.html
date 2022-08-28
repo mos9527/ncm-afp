@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+
+<head>
+    <style>
+        * {
+            font-family: sans-serif;
+        }
+        pre {
+            font-family: monospace;
+        }
+        a {
+            font-family: sans-serif;
+        }
+        audio {
+            width: 100%;
+        }
+    </style>
+</head>
+
+<body>
+    <h1 for="picker">NCM-AFP Demo</h1>
+    <p>Usage:</p>
+    <li>Select your audio file through "Choose File" picker</li>
+    <li>Seek to a point where your music should sound the most distinct</li>
+    <li>Hit the "Clip" button and wait for the results!</li>
+    <p><b>NOTE: </b>This app does not use your microphone. Your audio file is the only thing it will record from!</p>
+    <p>Sorry if your music somehow sounds 100x awful here, since everything is in <i>telephone quality</i> and that's what <i>they</i>'re using :/</p>
+
+    <audio id="audio" controls autoplay></audio>
+    <button id="invoke" disabled>Clip</button>
+    <input type="file" name="picker" accept="*" id="file">
+    <hr>
+    <pre id="logs"></pre>
+</body>
+<script src="afp.js"></script>
+<script>
+    const duration = 5
+    let audioCtx, recorderNode
+    let runtime = InstantiateRuntime()
+    let audio = document.getElementById('audio')
+    let file = document.getElementById('file')
+    let btn = document.getElementById('invoke')
+    let logs = document.getElementById('logs')
+    logs.write = line => logs.innerHTML += line + '\n'
+  
+    function RecorderCallback(channelL){
+        let sampleBuffer = new Float32Array(channelL.subarray(0, duration * 8000))
+        let FP = GenerateFP(sampleBuffer)
+        logs.write(`[index] Generated FP ${FP}`)
+        logs.write('[index] Now querying, please wait...')
+        fetch(
+            'https://pyncmd.vercel.app/api/pyncm?module=track&method=GetMatchTrackByFP&' +
+            new URLSearchParams(Object.assign({
+                audioFP: FP,
+                duration: duration
+            }))
+        ).then(resp => resp.json()).then(resp => {
+            logs.write(`[index] Query complete. Results=${resp.data.result.length}`)            
+            for (var song of resp.data.result) {
+                logs.write(
+                    `[pyncmd] <a target="_blank" href="https://music.163.com/song?id=${song.song.id}">${song.song.name} - ${song.song.album.name} (${song.startTime / 1000}s)</a>` +
+                    `   <a target="_blank" href="https://pyncmd.vercel.app/?trackId=${song.song.id}">(Play it in PyNCMd)</a>`
+                    )            
+            }
+        })        
+    }
+
+    function InitAudioCtx(){
+        if (audioCtx) return
+        // AFP.wasm can't do it with anything other than 8KHz
+        audioCtx = new AudioContext({ 'sampleRate': 8000 })                
+        let audioNode = audioCtx.createMediaElementSource(audio)
+        audioCtx.audioWorklet.addModule('rec.js').then(() => {
+            recorderNode = new AudioWorkletNode(audioCtx, 'timed-recorder')
+            audioNode.connect(recorderNode) // recorderNode doesn't output anything
+            audioNode.connect(audioCtx.destination)            
+            recorderNode.port.onmessage = event => {
+                switch (event.data.message) {
+                    case 'finished':
+                        RecorderCallback(event.data.recording)
+                        btn.innerHTML = 'Clip'
+                        btn.disabled = false
+                       break
+                    case 'bufferhealth':
+                        btn.innerHTML = `${(duration * (1-event.data.health)).toFixed(2)}s`
+                        break
+                    default:
+                        logs.write(event.data.message)
+                }
+            }
+        });
+    }
+
+    runtime.then(() => logs.write('[index] Wasm module loaded.'))
+    btn.disabled = true;
+
+    btn.addEventListener('click', event => {
+        recorderNode.port.postMessage({
+            message: 'start', duration: duration
+        })        
+        btn.disabled = true
+    })
+
+    file.addEventListener('change', event => {
+        file.files[0].arrayBuffer().then(
+            async buffer => {
+                await runtime
+                logs.write(`[index] File ${file.files[0].name} loaded.`)
+                InitAudioCtx() // Put this here so we don't have to deal with the 'user did not interact' thing
+                audio.src = window.URL.createObjectURL(new Blob([buffer]))
+                btn.disabled = false
+        })
+    })    
+</script>
