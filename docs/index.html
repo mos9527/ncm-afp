@@ -29,18 +29,20 @@
 </head>
 
 <body>
-    <h1 for="picker">NCM-AFP Demo</h1>
+    <h1>NCM-AFP Demo</h1>
     <p>Usage:</p>
     <li>Select your audio file through "Choose File" picker</li>
     <li>Seek to a point where your music should sound the most distinct</li>
-    <li>Hit the "Clip" button and wait for the results!</li>
-    <p><b>NOTE: </b>This app does not use your microphone. Your audio file is the only thing it will record from!</p>
+    <li>Hit the "Clip" button and wait for the results!</li>    
     <p>Sorry if your music somehow sounds 100x awful here, since everything is in <i>telephone quality</i> and that's what <i>they</i>'re using :/</p>
 
     <audio id="audio" controls autoplay></audio>
     <canvas id="canvas"></canvas>
-    <button id="invoke" disabled>Clip</button>
+    <button id="invoke">Clip</button>
     <input type="file" name="picker" accept="*" id="file">
+    <hr>
+    <label for="use-mic">Listen from microphone</label>
+    <input type="checkbox" name="use-mic" id="usemic">
     <hr>
     <pre id="logs"></pre>
 </body>
@@ -48,14 +50,15 @@
     import { InstantiateRuntime , GenerateFP } from './afp.js'
     const duration = 5
 
-    let audioCtx, recorderNode
+    let audioCtx, recorderNode, micSourceNode
     let audioBuffer,bufferHealth
     let runtime = InstantiateRuntime()
     let audio = document.getElementById('audio')
     let file = document.getElementById('file')
-    let btn = document.getElementById('invoke')
+    let clip = document.getElementById('invoke')
+    let usemic = document.getElementById('usemic')
     let canvas = document.getElementById('canvas')
-    var canvasCtx = canvas.getContext('2d')
+    let canvasCtx = canvas.getContext('2d')
     let logs = document.getElementById('logs')
     logs.write = line => logs.innerHTML += line + '\n'
   
@@ -81,10 +84,11 @@
         })        
     }
 
-    function InitAudioCtx(){
-        if (audioCtx) return
+    function InitAudioCtx(){    
         // AFP.wasm can't do it with anything other than 8KHz
-        audioCtx = new AudioContext({ 'sampleRate': 8000 })                
+        audioCtx = new AudioContext({ 'sampleRate': 8000 })
+        if (audioCtx.state == 'suspended')
+            return false
         let audioNode = audioCtx.createMediaElementSource(audio)
         audioCtx.audioWorklet.addModule('rec.js').then(() => {
             recorderNode = new AudioWorkletNode(audioCtx, 'timed-recorder')
@@ -94,12 +98,12 @@
                 switch (event.data.message) {
                     case 'finished':
                         RecorderCallback(event.data.recording)
-                        btn.innerHTML = 'Clip'
-                        btn.disabled = false
+                        clip.innerHTML = 'Clip'
+                        clip.disabled = false
                         canvas.classList.remove('canvas-active')
                        break
                     case 'bufferhealth':
-                        btn.innerHTML = `${(duration * (1-event.data.health)).toFixed(2)}s`
+                        clip.innerHTML = `${(duration * (1-event.data.health)).toFixed(2)}s`
                         bufferHealth = event.data.health
                         audioBuffer = event.data.recording
                         break
@@ -107,27 +111,45 @@
                         logs.write(event.data.message)
                 }
             }
+            // Attempt to get user's microphone and connect it to the AudioContext.
+            navigator.mediaDevices.getUserMedia({
+                audio: {
+                    echoCancellation: false,
+                    autoGainControl: false,
+                    noiseSuppression: false,
+                    latency: 0,
+                },
+            }).then(micStream=>{
+                micSourceNode = audioCtx.createMediaStreamSource(micStream);
+                micSourceNode.connect(recorderNode)
+                usemic.checked = true
+                logs.write('[rec.js] Microphone attached.')
+            });                
         });
+        return true
     }
 
-    runtime.then(() => logs.write('[index] Wasm module loaded.'))
-    btn.disabled = true;
-    btn.addEventListener('click', event => {
+    runtime.then(() => logs.write('[index] Wasm module loaded.'))    
+    clip.addEventListener('click', event => {
         recorderNode.port.postMessage({
             message: 'start', duration: duration
         })        
-        btn.disabled = true
+        clip.disabled = true
         canvas.classList.add('canvas-active')
     })
-
+    usemic.addEventListener('change',event=>{              
+        if (!usemic.checked)
+            micSourceNode.disconnect(recorderNode)
+        else
+            micSourceNode.connect(recorderNode)        
+    })
     file.addEventListener('change', event => {
         file.files[0].arrayBuffer().then(
             async buffer => {
                 await runtime
-                logs.write(`[index] File ${file.files[0].name} loaded.`)
-                InitAudioCtx() // Put this here so we don't have to deal with the 'user did not interact' thing
+                logs.write(`[index] File ${file.files[0].name} loaded.`)                
                 audio.src = window.URL.createObjectURL(new Blob([buffer]))
-                btn.disabled = false                
+                clip.disabled = false                
         })
     })    
 
@@ -147,4 +169,14 @@
         requestAnimationFrame(UpdateCanvas)
     }
     UpdateCanvas()
+    let requestCtx = setInterval(()=>{
+        try {
+            if (InitAudioCtx()) { // Put this here so we don't have to deal with the 'user did not interact' thing
+                clearInterval(requestCtx)
+                logs.write('[rec.js] Audio Context started.')
+            }
+        } catch {
+            // Fail silently
+        }
+    },100)
 </script>
