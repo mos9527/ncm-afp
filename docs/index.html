@@ -74,6 +74,9 @@
                 duration: duration
             }))
         ).then(resp => resp.json()).then(resp => {
+            if (!resp.data.result){
+                return logs.write('[index] Query failed with no results.')
+            }
             logs.write(`[index] Query complete. Results=${resp.data.result.length}`)            
             for (var song of resp.data.result) {
                 logs.write(
